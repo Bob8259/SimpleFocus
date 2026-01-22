@@ -5,6 +5,8 @@ import os
 import time
 import datetime
 import keyboard
+import json
+import threading
 
 def get_audio_devices():
     """List available audio devices using ffmpeg and return them as a list."""
@@ -75,12 +77,41 @@ def select_best_microphone(devices):
         
     return None
 
+def monitor_ffmpeg_output(process):
+    """Monitor ffmpeg output to detect when recording starts."""
+    started = False
+    while True:
+        # Read line from stderr
+        line = process.stderr.readline()
+        if not line:
+            break
+            
+        # Print the line so the user can still see ffmpeg output
+        print(line, end='', file=sys.stderr)
+        
+        # Check for start indicators
+        if not started and ("Press [q] to stop" in line or "frame=" in line):
+            print("start")
+            sys.stdout.flush() # Ensure it prints immediately
+            started = True
+
 def start_recording(output_file=None):
     """Start recording the screen and audio."""
     if output_file is None:
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         output_file = f"recording_{timestamp}.mp4"
     
+    # Load recording area from config
+    recording_area = None
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'recording_config.json')
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+                recording_area = config.get("recording_area")
+        except Exception as e:
+            print(f"Error loading config: {e}")
+
     devices = get_audio_devices()
     print(f"Detected audio devices: {devices}")
     
@@ -94,27 +125,55 @@ def start_recording(output_file=None):
         audio_input = ['-f', 'dshow', '-i', f'audio={mic}']
         
     # FFmpeg command for screen recording (gdigrab) and audio (dshow)
-    # -draw_mouse 0: hide the mouse cursor
+    # -draw_mouse 1: record the mouse cursor
     # -f gdigrab -i desktop: record the entire desktop
     command = [
         'ffmpeg',
         '-y',               # Overwrite output file
         '-f', 'gdigrab',
-        '-draw_mouse', '0', # Hide mouse
-        '-i', 'desktop',
-    ] + audio_input + [
+        '-draw_mouse', '1', # Record mouse
+    ]
+
+    # Apply recording area if specified
+    if recording_area and len(recording_area) == 4:
+        x, y, w, h = recording_area
+        print(f"Recording area: x={x}, y={y}, width={w}, height={h}")
+        command.extend([
+            '-offset_x', str(x),
+            '-offset_y', str(y),
+            '-video_size', f"{w}x{h}"
+        ])
+    else:
+        print("Recording full screen.")
+
+    command.extend(['-i', 'desktop'])
+    command.extend(audio_input)
+    
+    command.extend([
         '-c:v', 'libx264',   # Video codec
         '-preset', 'ultrafast',
         '-pix_fmt', 'yuv420p',
         '-c:a', 'aac',       # Audio codec
         output_file
-    ]
+    ])
     
     print(f"\nStarting recording to {output_file}...")
     print(f"Generated Command: {' '.join(command)}")
     
-    # Use Popen to run in background
-    return subprocess.Popen(command, stdin=subprocess.PIPE)
+    # Use Popen to run in background, redirect stderr to monitor start
+    process = subprocess.Popen(
+        command, 
+        stdin=subprocess.PIPE, 
+        stderr=subprocess.PIPE, 
+        text=True, 
+        errors='replace'
+    )
+    
+    # Start output monitoring in a separate thread
+    monitor_thread = threading.Thread(target=monitor_ffmpeg_output, args=(process,), daemon=True)
+    monitor_thread.start()
+
+    return process
 
 def stop_recording(process):
     """Stop the recording process gracefully."""
@@ -122,7 +181,7 @@ def stop_recording(process):
         print("Stopping recording...")
         try:
             # Send 'q' to ffmpeg to stop gracefully
-            process.stdin.write(b'q')
+            process.stdin.write('q')
             process.stdin.flush()
             process.wait(timeout=5)
         except Exception as e:
