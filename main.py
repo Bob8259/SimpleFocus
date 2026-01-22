@@ -2,6 +2,9 @@ import subprocess
 import re
 import sys
 import os
+import time
+import datetime
+import keyboard
 
 def get_audio_devices():
     """List available audio devices using ffmpeg and return them as a list."""
@@ -72,8 +75,12 @@ def select_best_microphone(devices):
         
     return None
 
-def record_screen_and_audio(output_file="output.mp4"):
-    """Record the screen and audio from the selected microphone."""
+def start_recording(output_file=None):
+    """Start recording the screen and audio."""
+    if output_file is None:
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        output_file = f"recording_{timestamp}.mp4"
+    
     devices = get_audio_devices()
     print(f"Detected audio devices: {devices}")
     
@@ -103,17 +110,49 @@ def record_screen_and_audio(output_file="output.mp4"):
         output_file
     ]
     
-    print("\nStarting recording... Press Ctrl+C to stop.")
+    print(f"\nStarting recording to {output_file}...")
     print(f"Generated Command: {' '.join(command)}")
     
-    try:
-        # We use a subprocess.Popen to allow for a clean interruption if needed
-        # but here subprocess.run is fine for a simple script
-        subprocess.run(command)
-    except KeyboardInterrupt:
-        print("\nRecording stopped by user.")
-    except Exception as e:
-        print(f"An error occurred during recording: {e}")
+    # Use Popen to run in background
+    return subprocess.Popen(command, stdin=subprocess.PIPE)
+
+def stop_recording(process):
+    """Stop the recording process gracefully."""
+    if process.poll() is None:
+        print("Stopping recording...")
+        try:
+            # Send 'q' to ffmpeg to stop gracefully
+            process.stdin.write(b'q')
+            process.stdin.flush()
+            process.wait(timeout=5)
+        except Exception as e:
+            print(f"Error stopping gracefully: {e}")
+            process.terminate()
+        print("Recording stopped.")
 
 if __name__ == "__main__":
-    record_screen_and_audio()
+    print("Press Ctrl+F1 to start recording.")
+    print("Press Ctrl+F2 to stop recording.")
+    print("Press Ctrl+C to exit.")
+    
+    recording_process = None
+    
+    try:
+        while True:
+            if keyboard.is_pressed('ctrl+f1'):
+                if recording_process is None:
+                    recording_process = start_recording()
+                    # Debounce
+                    time.sleep(1)
+            
+            if keyboard.is_pressed('ctrl+f2'):
+                if recording_process is not None:
+                    stop_recording(recording_process)
+                    recording_process = None
+                    time.sleep(1)
+            
+            time.sleep(0.05)
+    except KeyboardInterrupt:
+        print("\nExiting...")
+        if recording_process:
+            stop_recording(recording_process)
