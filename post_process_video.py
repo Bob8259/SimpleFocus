@@ -185,7 +185,7 @@ def process_video(video_path):
             '-i', temp_output_path,
             '-i', video_path,
             '-c:v', 'libx264',
-            '-crf', '19',
+            '-crf', '23',
             '-preset', 'fast',
             '-c:a', 'aac',
             '-map', '0:v:0',
