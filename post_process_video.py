@@ -184,7 +184,9 @@ def process_video(video_path):
             'ffmpeg', '-y',
             '-i', temp_output_path,
             '-i', video_path,
-            '-c:v', 'copy',
+            '-c:v', 'libx264',
+            '-crf', '19',
+            '-preset', 'fast',
             '-c:a', 'aac',
             '-map', '0:v:0',
             '-map', '1:a:0',
@@ -208,6 +210,12 @@ def process_video(video_path):
     # Cleanup
     if os.path.exists(temp_output_path):
         os.remove(temp_output_path)
+
+    # Delete original recording files
+    if os.path.exists(video_path):
+        os.remove(video_path)
+    if os.path.exists(json_path):
+        os.remove(json_path)
         
     print(f"Done! Saved to {final_output_path}")
 
