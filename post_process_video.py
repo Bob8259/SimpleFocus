@@ -62,6 +62,18 @@ def process_video(video_path):
     MAX_RADIUS = 30
     COLOR = (0, 0, 255) # Red in BGR
 
+    # Zoom parameters
+    ZOOM_LEVEL = 1.3
+    ZOOM_DURATION = 1.5
+    ZOOM_SMOOTHING = 0.1
+    
+    current_zoom = 1.0
+    current_center_x = width / 2.0
+    current_center_y = height / 2.0
+    
+    last_click_time = -10.0
+    last_click_pos = (width / 2.0, height / 2.0)
+
     # Initialize last_video_time slightly negative so events at 0.0 are caught
     last_video_time = -1.0
 
@@ -88,6 +100,10 @@ def process_video(video_path):
                          'y': event['y'],
                          'start_time': event_video_time, # Store exact start time, not frame
                      })
+                     # Update zoom target on new click
+                     if event_video_time > last_click_time:
+                         last_click_time = event_video_time
+                         last_click_pos = (event['x'], event['y'])
 
         # Draw active clicks
         clicks_to_keep = []
@@ -108,6 +124,45 @@ def process_video(video_path):
         
         active_clicks = clicks_to_keep
         last_video_time = current_video_time
+
+        # Calculate target zoom state
+        time_since_last_click = current_video_time - last_click_time
+        if time_since_last_click < ZOOM_DURATION:
+            target_zoom = ZOOM_LEVEL
+            target_cx, target_cy = last_click_pos
+        else:
+            target_zoom = 1.0
+            target_cx, target_cy = width / 2.0, height / 2.0
+
+        # Smooth update
+        current_zoom += (target_zoom - current_zoom) * ZOOM_SMOOTHING
+        current_center_x += (target_cx - current_center_x) * ZOOM_SMOOTHING
+        current_center_y += (target_cy - current_center_y) * ZOOM_SMOOTHING
+
+        # Apply Zoom via Crop/Resize
+        if abs(current_zoom - 1.0) > 0.001:
+            view_w = width / current_zoom
+            view_h = height / current_zoom
+            
+            # Top-left corner (clamped)
+            x1 = current_center_x - view_w / 2
+            y1 = current_center_y - view_h / 2
+            
+            x1 = max(0, min(x1, width - view_w))
+            y1 = max(0, min(y1, height - view_h))
+            
+            # Crop and Resize
+            # Ensure coordinates are integers for slicing
+            x1_int = int(x1)
+            y1_int = int(y1)
+            w_int = int(view_w)
+            h_int = int(view_h)
+
+            # Fix rounding issues that might cause empty crop
+            if w_int > 0 and h_int > 0:
+                crop = frame[y1_int : y1_int + h_int, x1_int : x1_int + w_int]
+                # Use INTER_LINEAR for speed, or INTER_CUBIC for quality
+                frame = cv2.resize(crop, (width, height), interpolation=cv2.INTER_LINEAR)
 
         out.write(frame)
         frame_idx += 1
