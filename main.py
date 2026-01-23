@@ -7,6 +7,34 @@ import datetime
 import keyboard
 import json
 import threading
+from pynput import mouse
+
+mouse_listener = None
+mouse_events = []
+recording_start_time = None
+
+def on_click(x, y, button, pressed):
+    if pressed and button == mouse.Button.left:
+        event = {
+            "time": time.time(),
+            "x": x,
+            "y": y,
+            "button": "left",
+            "action": "pressed"
+        }
+        mouse_events.append(event)
+
+def start_mouse_listener():
+    global mouse_listener, mouse_events
+    mouse_events = []
+    mouse_listener = mouse.Listener(on_click=on_click)
+    mouse_listener.start()
+
+def stop_mouse_listener():
+    global mouse_listener
+    if mouse_listener:
+        mouse_listener.stop()
+        mouse_listener = None
 
 def get_audio_devices():
     """List available audio devices using ffmpeg and return them as a list."""
@@ -79,6 +107,7 @@ def select_best_microphone(devices):
 
 def monitor_ffmpeg_output(process):
     """Monitor ffmpeg output to detect when recording starts."""
+    global recording_start_time
     started = False
     while True:
         # Read line from stderr
@@ -93,6 +122,7 @@ def monitor_ffmpeg_output(process):
         if not started and ("Press [q] to stop" in line or "frame=" in line):
             print("start")
             sys.stdout.flush() # Ensure it prints immediately
+            recording_start_time = time.time()
             started = True
 
 def start_recording(output_file=None):
@@ -173,9 +203,11 @@ def start_recording(output_file=None):
     monitor_thread = threading.Thread(target=monitor_ffmpeg_output, args=(process,), daemon=True)
     monitor_thread.start()
 
-    return process
+    start_mouse_listener()
 
-def stop_recording(process):
+    return process, output_file
+
+def stop_recording(process, output_file):
     """Stop the recording process gracefully."""
     if process.poll() is None:
         print("Stopping recording...")
@@ -188,6 +220,30 @@ def stop_recording(process):
             print(f"Error stopping gracefully: {e}")
             process.terminate()
         print("Recording stopped.")
+    
+    stop_mouse_listener()
+    
+    if output_file:
+        json_path = os.path.splitext(output_file)[0] + ".json"
+        try:
+            with open(json_path, 'w') as f:
+                data = {
+                    "start_time": recording_start_time,
+                    "events": mouse_events
+                }
+                json.dump(data, f, indent=4)
+            print(f"Mouse events saved to {json_path}")
+        except Exception as e:
+            print(f"Error saving mouse events: {e}")
+
+    # Auto-run post-processing
+    if output_file:
+        try:
+            print("Starting post-processing...")
+            post_process_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'post_process_video.py')
+            subprocess.Popen(['python', post_process_script, output_file])
+        except Exception as e:
+            print(f"Error starting post-processing: {e}")
 
 if __name__ == "__main__":
     print("Press Ctrl+F1 to start recording.")
@@ -195,23 +251,25 @@ if __name__ == "__main__":
     print("Press Ctrl+C to exit.")
     
     recording_process = None
+    current_output_file = None
     
     try:
         while True:
             if keyboard.is_pressed('ctrl+f1'):
                 if recording_process is None:
-                    recording_process = start_recording()
+                    recording_process, current_output_file = start_recording()
                     # Debounce
                     time.sleep(1)
             
             if keyboard.is_pressed('ctrl+f2'):
                 if recording_process is not None:
-                    stop_recording(recording_process)
+                    stop_recording(recording_process, current_output_file)
                     recording_process = None
+                    current_output_file = None
                     time.sleep(1)
             
             time.sleep(0.05)
     except KeyboardInterrupt:
         print("\nExiting...")
         if recording_process:
-            stop_recording(recording_process)
+            stop_recording(recording_process, current_output_file)
