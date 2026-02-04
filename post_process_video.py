@@ -117,14 +117,15 @@ def process_video(video_path):
         if not ret:
             break
 
-        # Calculate current timestamp of the frame using frame position
-        # CAP_PROP_POS_MSEC returns milliseconds, so divide by 1000
-        current_video_time = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+        # Calculate current timestamp of the frame using frame index
+        # This is more reliable than CAP_PROP_POS_MSEC when CFR is forced
+        current_video_time = frame_idx / fps
         
         # Add new events to active_clicks
         for event in events:
-            # User reported video is delayed by roughly 0.2s, so we delay events to match
-            DELAY_OFFSET = 0.8
+            # DELAY_OFFSET is used to compensate for FFmpeg startup delay.
+            # With CFR forced, we start with 0.0 and adjust if needed.
+            DELAY_OFFSET = 1.5
             event_video_time = (event['time'] + DELAY_OFFSET) - start_time
             
             # Check if this event happened between the last frame and this frame

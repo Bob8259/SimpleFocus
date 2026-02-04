@@ -182,6 +182,7 @@ def start_recording(output_file=None):
         'ffmpeg',
         '-y',               # Overwrite output file
         '-f', 'gdigrab',
+        '-framerate', '30', # Force input framerate
         '-draw_mouse', '0', # Disable native mouse recording
     ]
 
@@ -203,6 +204,9 @@ def start_recording(output_file=None):
     command.extend([
         '-c:v', 'libx264',   # Video codec
         '-preset', 'ultrafast',
+        '-crf', '20',        # Balance quality and performance
+        '-r', '30',          # Force constant output framerate
+        '-vsync', 'cfr',     # Force video sync to CFR
         '-pix_fmt', 'yuv420p',
         '-c:a', 'aac',       # Audio codec
         output_file
