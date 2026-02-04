@@ -1,4 +1,5 @@
 import cv2
+import numpy as np
 import json
 import argparse
 import os
@@ -10,6 +11,28 @@ def draw_transparent_circle(image, center, radius, color, alpha):
     overlay = image.copy()
     cv2.circle(overlay, center, radius, color, -1)
     cv2.addWeighted(overlay, alpha, image, 1 - alpha, 0, image)
+
+def draw_cursor(image, center, color=(255, 255, 255), outline_color=(0, 0, 0)):
+    """Draws a mouse cursor at the given center."""
+    x, y = center
+    # Define cursor polygon relative to (0,0)
+    # Simple arrow shape
+    pts = np.array([
+        [0, 0], 
+        [0, 20], 
+        [5, 15], 
+        [12, 22], 
+        [14, 20], 
+        [7, 13], 
+        [15, 13]
+    ], np.int32)
+    
+    # Translate to (x, y)
+    pts = pts + [x, y]
+    
+    # Draw outline and fill
+    cv2.fillPoly(image, [pts], color)
+    cv2.polylines(image, [pts], isClosed=True, color=outline_color, thickness=1)
 
 def process_video(video_path):
     json_path = os.path.splitext(video_path)[0] + ".json"
@@ -27,6 +50,8 @@ def process_video(video_path):
         return
         
     start_time = data.get("start_time")
+    offset_x = data.get("initial_offset_x", 0)
+    offset_y = data.get("initial_offset_y", 0)
     events = data.get("events", [])
 
     if start_time is None:
@@ -73,6 +98,16 @@ def process_video(video_path):
     
     last_click_time = -10.0
     last_click_pos = (width / 2.0, height / 2.0)
+    
+    # Mouse cursor state
+    current_mouse_x = width // 2
+    current_mouse_y = height // 2
+    
+    # Initialize mouse position from first event if available
+    first_move = next((e for e in events if e.get('type') == 'move'), None)
+    if first_move:
+        current_mouse_x = first_move['x'] - offset_x
+        current_mouse_y = first_move['y'] - offset_y
 
     # Initialize last_video_time slightly negative so events at 0.0 are caught
     last_video_time = -1.0
@@ -89,21 +124,29 @@ def process_video(video_path):
         # Add new events to active_clicks
         for event in events:
             # User reported video is delayed by roughly 0.2s, so we delay events to match
-            DELAY_OFFSET = 0.7 
+            DELAY_OFFSET = 0.8
             event_video_time = (event['time'] + DELAY_OFFSET) - start_time
             
             # Check if this event happened between the last frame and this frame
             if last_video_time < event_video_time <= current_video_time:
-                 if event['action'] == 'pressed' and event['button'] == 'left':
+                 if event.get('type') == 'move':
+                     current_mouse_x = event['x'] - offset_x
+                     current_mouse_y = event['y'] - offset_y
+                     
+                 if event.get('action') == 'pressed' and event.get('button') == 'left':
+                     # Update position just in case
+                     current_mouse_x = event['x'] - offset_x
+                     current_mouse_y = event['y'] - offset_y
+                     
                      active_clicks.append({
-                         'x': event['x'],
+                         'x': event['x'], # Note: These are global coords, we usually subtract offset in loop
                          'y': event['y'],
-                         'start_time': event_video_time, # Store exact start time, not frame
+                         'start_time': event_video_time, 
                      })
                      # Update zoom target on new click
                      if event_video_time > last_click_time:
                          last_click_time = event_video_time
-                         last_click_pos = (event['x'], event['y'])
+                         last_click_pos = (event['x'] - offset_x, event['y'] - offset_y)
 
         # Draw active clicks
         clicks_to_keep = []
@@ -118,18 +161,23 @@ def process_video(video_path):
                 # Draw
                 if radius > 0:
                     # Red circle with some transparency
-                    draw_transparent_circle(frame, (click['x'], click['y']), radius, COLOR, 0.6)
+                    # Adjust click coordinates by offset
+                    draw_transparent_circle(frame, (int(click['x'] - offset_x), int(click['y'] - offset_y)), radius, COLOR, 0.6)
                 
                 clicks_to_keep.append(click)
         
         active_clicks = clicks_to_keep
+        
+        # Draw Mouse Cursor
+        draw_cursor(frame, (int(current_mouse_x), int(current_mouse_y)))
+        
         last_video_time = current_video_time
 
         # Calculate target zoom state
         time_since_last_click = current_video_time - last_click_time
         if time_since_last_click < ZOOM_DURATION:
             target_zoom = ZOOM_LEVEL
-            target_cx, target_cy = last_click_pos
+            target_cx, target_cy = last_click_pos # Already offset corrected
         else:
             target_zoom = 1.0
             target_cx, target_cy = width / 2.0, height / 2.0

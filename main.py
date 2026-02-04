@@ -16,6 +16,7 @@ recording_start_time = None
 def on_click(x, y, button, pressed):
     if pressed and button == mouse.Button.left:
         event = {
+            "type": "click",
             "time": time.time(),
             "x": x,
             "y": y,
@@ -24,10 +25,30 @@ def on_click(x, y, button, pressed):
         }
         mouse_events.append(event)
 
+def on_move(x, y):
+    event = {
+        "type": "move",
+        "time": time.time(),
+        "x": x,
+        "y": y
+    }
+    mouse_events.append(event)
+
 def start_mouse_listener():
     global mouse_listener, mouse_events
     mouse_events = []
-    mouse_listener = mouse.Listener(on_click=on_click)
+    
+    # Capture initial position immediately
+    mouse_controller = mouse.Controller()
+    initial_x, initial_y = mouse_controller.position
+    mouse_events.append({
+        "type": "move",
+        "time": time.time(),
+        "x": int(initial_x),
+        "y": int(initial_y)
+    })
+    
+    mouse_listener = mouse.Listener(on_click=on_click, on_move=on_move)
     mouse_listener.start()
 
 def stop_mouse_listener():
@@ -161,7 +182,7 @@ def start_recording(output_file=None):
         'ffmpeg',
         '-y',               # Overwrite output file
         '-f', 'gdigrab',
-        '-draw_mouse', '1', # Record mouse
+        '-draw_mouse', '0', # Disable native mouse recording
     ]
 
     # Apply recording area if specified
@@ -229,8 +250,25 @@ def stop_recording(process, output_file):
             with open(json_path, 'w') as f:
                 data = {
                     "start_time": recording_start_time,
+                    "initial_offset_x": 0,
+                    "initial_offset_y": 0,
                     "events": mouse_events
                 }
+                
+                # Check if we moved recording_area info to be accessible here
+                # Since recording_process/current_output_file are local in main, we need to pass offsets or read config again
+                # But easiest is to just read the config file again since it shouldn't have changed during recording
+                # Or better, we can modify start_recording to return it, but that changes signature.
+                # Let's read config again for simplicity to avoid major refactor.
+                config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'recording_config.json')
+                if os.path.exists(config_path):
+                    with open(config_path, 'r') as cf:
+                        conf = json.load(cf)
+                        area = conf.get("recording_area")
+                        if area and len(area) == 4:
+                            data["initial_offset_x"] = area[0]
+                            data["initial_offset_y"] = area[1]
+
                 json.dump(data, f, indent=4)
             print(f"Mouse events saved to {json_path}")
         except Exception as e:
